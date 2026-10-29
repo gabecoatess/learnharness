@@ -93,6 +93,13 @@ function defaultThinkingLevel(model: Model<Api>): ThinkingLevel {
 	return supported[0] ?? "off";
 }
 
+/** Output-token ceiling per request (thinking + reply). Unset, pi requests
+ *  the model's catalog maximum (e.g. ~944k for Gemini 4 Argon), and
+ *  OpenRouter refuses any request whose worst-case cost exceeds the
+ *  account's remaining credits — a 402 on a turn that would cost cents.
+ *  Real turns use a few thousand tokens. */
+export const MAX_OUTPUT_TOKENS = 64_000;
+
 /** The production engine for a RESOLVED spec (model slots wave,
  *  2026-09-20): provider-aware catalog lookup + thinking clamp. The API
  *  key is resolved by pi-ai itself from the environment per request (the
@@ -120,7 +127,11 @@ export function piEngineForSpec(spec: ResolvedModelSpec, background: boolean | (
 		streamFn: (requestModel, context, options) => {
 			const purpose = typeof background === "function" ? background : () => background;
 			const stream = spec.provider === "chatgpt" ? chatGPTStream(purpose, lifecycle) : nativeId ? nativeSubscriptionStream(models.getProvider(nativeId)!, purpose, lifecycle) : models.streamSimple.bind(models);
-			return stream(requestModel, context, { ...options, reasoning: level === "off" ? undefined : level });
+			return stream(requestModel, context, {
+				...options,
+				reasoning: level === "off" ? undefined : level,
+				maxTokens: options?.maxTokens ?? Math.min(requestModel.maxTokens, MAX_OUTPUT_TOKENS),
+			});
 		},
 	};
 }
