@@ -30,6 +30,7 @@ import {
 import { runPiTurn } from "./pi/ui-stream.ts";
 import { collectToolCallIds } from "./pi/call-ids.ts";
 import { providerEventNote } from "../agent/provider-events.ts";
+import { telemetryEvent, telemetryRunEnd, telemetryRunStart } from "../agent/telemetry.ts";
 import { effectiveSettings, stores } from "./stores.ts";
 import { searchAvailable, searchProvider } from "./search.ts";
 import { providerKeyPresent } from "./keys.ts";
@@ -519,6 +520,16 @@ export async function handleChatInput(
 		// JSONL event stream with the record's turns; no-op unless
 		// LH_PROVIDER_EVENTS=1.
 		providerEventNote(chatId, "turn", `run start (base: ${agentMessages.length} messages)`);
+		// Layered turn recorder: mints the run id every later
+		// telemetry line correlates to; no-op unless LH_TELEMETRY=1.
+		telemetryRunStart(chatId, {
+			agent: record.kind === "practice" ? "practice" : teaching ? "teacher" : "prober",
+			input: input.type,
+			background: callPurpose.background,
+			baseMessages: agentMessages.length,
+			model: modelId,
+			thinkingLevel: engine.level,
+		});
 		const handle = runPiTurn({
 			agent: constructed,
 			requestCycle,
@@ -556,11 +567,13 @@ export async function handleChatInput(
 				const persisted = stores.chatStore.getChat(chatId)?.messages ?? [];
 				reconcileUserSteers(chatId, persisted);
 				settleSteers(chatId, persisted, true, constructed);
+				telemetryEvent(chatId, "run.settle_failed", { error: String(error), reportedErrorText });
 			},
 			onFinish: (turnMessages, isAborted) => {
 				// Wave B: append only messages past the temporary agent prefix.
 				// Retry's saved record still includes its earlier failed attempts.
 				const stamped = persistTurn(stores.chatStore, chatId, persistBaseCount, turnMessages, isAborted);
+				telemetryRunEnd(chatId, isAborted, stamped, stores.chatStore.getChat(chatId)?.messages ?? stamped);
 				noteSteersDurable(chatId, stores.chatStore.getChat(chatId)?.messages ?? stamped);
 				// usage log append (idempotent per turn id) — the stats bar
 				// refolds this on the client after the turn settles. The

@@ -13,6 +13,9 @@
  *   LH_PROVIDER_EVENTS=1 npm run dev
  * Default off: raw events carry full prompts (privacy) and unbounded
  * volume (disk). No app surface; a debugging feature, not a feature.
+ * LH_TELEMETRY=1 also turns it on, writing into the chat's telemetry
+ * folder instead (data/telemetry/<chatId>/provider-events.jsonl —
+ * telemetry.ts).
  *
  * Artifact: one JSONL file per chat at
  *   data/debug/provider-events/<chatId>.jsonl
@@ -28,6 +31,7 @@
 import * as fs from "node:fs";
 import path from "node:path";
 import { PATHS } from "../../config.ts";
+import { telemetryChatDir, telemetryEnabled, telemetryStamp } from "./telemetry.ts";
 
 /** Max bytes per chat's JSONL before recording stops (with a marker). */
 const CAP_BYTES = 20 * 1024 * 1024;
@@ -50,16 +54,22 @@ export type ProviderEventObserver = (data: unknown, model: ProviderEventModel) =
 const files = new Map<string, { bytes: number; capped: boolean }>();
 
 function fileFor(chatId: string): string {
+	// LH_TELEMETRY: the raw stream joins the chat's telemetry
+	// folder, beside the layered timeline it correlates with.
+	if (telemetryEnabled()) return path.join(telemetryChatDir(chatId), "provider-events.jsonl");
 	// chat ids are app-minted (chat_<base36>) — sanitize against any future
 	// id scheme putting path-hostile characters in here.
 	const safe = chatId.replace(/[^a-zA-Z0-9_-]/g, "_");
 	return path.join(providerEventsDir.current, `${safe}.jsonl`);
 }
 
-function writeLine(file: string, line: Record<string, unknown>): void {
+function writeLine(file: string, line: Record<string, unknown>, chatId: string): void {
 	const state = files.get(file);
 	if (state?.capped) return;
-	const text = `${JSON.stringify({ t: Date.now(), ...line })}\n`;
+	// Under LH_TELEMETRY the line carries the shared correlation stamp
+	// (seq/run/req), so raw events order against events.jsonl.
+	const stamp = telemetryEnabled() ? telemetryStamp(chatId) : { t: Date.now() };
+	const text = `${JSON.stringify({ ...stamp, ...line })}\n`;
 	try {
 		const before = state?.bytes ?? (fs.existsSync(file) ? fs.statSync(file).size : 0);
 		fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -90,7 +100,7 @@ function encodeEvent(data: unknown): unknown {
 /** True when recording is on (read per call — toggling needs no restart
  *  beyond the next turn's agent construction). */
 export function providerEventsEnabled(): boolean {
-	return !!process.env.LH_PROVIDER_EVENTS;
+	return !!process.env.LH_PROVIDER_EVENTS || telemetryEnabled();
 }
 
 /**
@@ -107,7 +117,7 @@ export function providerEventObserver(chatId: string, context: string): Provider
 			provider: model?.provider,
 			model: model?.id,
 			event: encodeEvent(data),
-		});
+		}, chatId);
 	};
 }
 
@@ -115,5 +125,5 @@ export function providerEventObserver(chatId: string, context: string): Provider
  *  persisted record; no-op when disabled. */
 export function providerEventNote(chatId: string, context: string, text: string): void {
 	if (!providerEventsEnabled()) return;
-	writeLine(fileFor(chatId), { ctx: context, note: text });
+	writeLine(fileFor(chatId), { ctx: context, note: text }, chatId);
 }

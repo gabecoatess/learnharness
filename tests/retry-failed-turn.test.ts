@@ -130,7 +130,7 @@ function assertPreserved(before: LhMessage[], saved: LhMessage[]): void {
 describe("failed-response Retry (issue #110)", () => {
 	it("retries from the saved answer, preserving the full input and failed attempt", async () => {
 		const { engine, contexts, histories } = scripted([
-			() => fauxAssistantMessage([fauxToolCall("quiz", QUIZ_INPUT, { id: "call-1" })], { stopReason: "toolUse" }),
+			() => fauxAssistantMessage([fauxText("Synthetic teaching before the question."), fauxToolCall("quiz", QUIZ_INPUT, { id: "call-1" })], { stopReason: "toolUse" }),
 			networkFailure,
 			() => fauxAssistantMessage([fauxText("Right — Mercury it is.")]),
 		]);

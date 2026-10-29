@@ -13,7 +13,7 @@ const mainFile = fileURLToPath(new URL("../electron/main.cjs", import.meta.url))
 const mainSource = readFileSync(mainFile, "utf8");
 const mainRequire = createRequire(mainFile);
 
-function fixture({ packaged = true, updaterMissing = false } = {}) {
+function fixture({ packaged = true, updaterMissing = false, selfUpdate = true } = {}) {
 	let settings: string | Error = JSON.stringify({ version: 1, general: { autoUpdate: true } });
 	const settingsReads: string[] = [];
 	const order: string[] = [];
@@ -100,7 +100,7 @@ function fixture({ packaged = true, updaterMissing = false } = {}) {
 			};
 			return mainRequire(id);
 		},
-		process: { argv: [], env: { LH_DEV_URL: "http://127.0.0.1:9000" }, platform: "darwin", on() {} },
+		process: { argv: [], env: { LH_DEV_URL: "http://127.0.0.1:9000", ...(selfUpdate ? { LH_SELF_UPDATE: "1" } : {}) }, platform: "darwin", on() {} },
 		__dirname: path.dirname(mainFile), URL,
 		setInterval: (callback: () => void, delay: number) => intervals.push({ callback, delay }),
 		setTimeout() {},
@@ -162,9 +162,9 @@ describe("automatic-update preference gate", () => {
 		assert.equal(f.settingsReads.length, 3);
 	});
 
-	for (const label of ["unpackaged", "missing updater"] as const) {
+	for (const label of ["unpackaged", "missing updater", "self-built"] as const) {
 		it(`${label} stays unavailable, not a saved OFF preference`, async () => {
-			const f = fixture({ packaged: label !== "unpackaged", updaterMissing: label === "missing updater" });
+			const f = fixture({ packaged: label !== "unpackaged", updaterMissing: label === "missing updater", selfUpdate: label !== "self-built" });
 			f.run("setupAutoUpdater()"); await f.check(true); await f.check();
 			assert.equal(f.updater.checks, 0);
 			assert.equal(f.settingsReads.length, 0);

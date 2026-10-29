@@ -88,7 +88,7 @@ function defaultLesson(calls: string[][]): FauxResponseStep[] {
 		(context) => {
 			calls.push(context.messages.map((m) => JSON.stringify((m as { content: unknown }).content)));
 			return fauxAssistantMessage(
-				[fauxThinking("Probe the basics first."), fauxToolCall("quiz", QUIZ_INPUT, { id: "call-1" })],
+				[fauxThinking("Probe the basics first."), fauxText("Synthetic teaching before the question."), fauxToolCall("quiz", QUIZ_INPUT, { id: "call-1" })],
 				{ stopReason: "toolUse" },
 			);
 		},
@@ -332,7 +332,7 @@ describe("teacher chat flow (scripted model)", () => {
 		const view2 = projectView(saved2.messages);
 		assert.equal(view2.length, 2, "the reaction continues the same assistant message (one group)");
 		const finalParts = view2[1]!.parts;
-		const textPart = finalParts.find((p) => p.type === "text");
+		const textPart = finalParts.findLast((p) => p.type === "text");
 		assert.ok(textPart && textPart.type === "text", "reaction text appended after the tool part");
 		assert.match((textPart as { text?: string }).text!, /Mercury it is/);
 		// The answered quiz part is still there, now with its output.
@@ -671,7 +671,7 @@ describe("teacher chat flow (scripted model)", () => {
 			(context) => {
 				calls.push(context.messages.map((m) => JSON.stringify((m as { content: unknown }).content)));
 				return fauxAssistantMessage(
-					[fauxToolCall("quiz", BAD_QUIZ_INPUT, { id: "call-bad" })],
+					[fauxText("Synthetic teaching before the question."), fauxToolCall("quiz", BAD_QUIZ_INPUT, { id: "call-bad" })],
 					{ stopReason: "toolUse" },
 				);
 			},
@@ -748,7 +748,7 @@ describe("teacher chat flow (scripted model)", () => {
 		};
 
 		const steps: FauxResponseStep[] = [
-			() => fauxAssistantMessage([fauxToolCall("quiz", STRINGY_QUIZ_INPUT, { id: "call-stringy" })], { stopReason: "toolUse" }),
+			() => fauxAssistantMessage([fauxText("Synthetic teaching before the question."), fauxToolCall("quiz", STRINGY_QUIZ_INPUT, { id: "call-stringy" })], { stopReason: "toolUse" }),
 			() => fauxAssistantMessage([fauxToolCall("quiz", QUIZ_INPUT, { id: "call-clean" })], { stopReason: "toolUse" }),
 		];
 		const { engine } = scriptedTeacher(() => steps);
@@ -787,7 +787,7 @@ describe("teacher chat flow (scripted model)", () => {
 		const { engine } = scriptedTeacher(() => [
 			() =>
 				fauxAssistantMessage(
-					[fauxToolCall("quiz", QUIZ_A, { id: "call-a" }), fauxToolCall("quiz", QUIZ_B, { id: "call-b" })],
+					[fauxText("Synthetic teaching before the question."), fauxToolCall("quiz", QUIZ_A, { id: "call-a" }), fauxToolCall("quiz", QUIZ_B, { id: "call-b" })],
 					{ stopReason: "toolUse" },
 			),
 		]);
@@ -1307,7 +1307,7 @@ it("explain tool call persists as a pending part; the free-text answer reveals t
 		(context) => {
 			cs.push(context.messages.map((m) => JSON.stringify((m as { content: unknown }).content)));
 			return fauxAssistantMessage(
-				[fauxThinking("Free recall this time."), fauxToolCall("explain", EXPLAIN_INPUT, { id: "call-1" })],
+				[fauxThinking("Free recall this time."), fauxText("Synthetic teaching before the question."), fauxToolCall("explain", EXPLAIN_INPUT, { id: "call-1" })],
 				{ stopReason: "toolUse" },
 			);
 		},
@@ -1469,6 +1469,7 @@ describe("parallel question calls: the answer defers its wake while a sibling da
 				return fauxAssistantMessage(
 					[
 						fauxThinking("Batch a graded and a non-graded check."),
+						fauxText("Synthetic teaching before the question."),
 						fauxToolCall("quiz", QUIZ_INPUT, { id: "call-1" }),
 						fauxToolCall("ask_user_question", ASK_INPUT, { id: "call-2" }),
 					],
@@ -1537,6 +1538,7 @@ describe("parallel rounds: the LAST resolution decides the wake (owner ruling 20
 				return fauxAssistantMessage(
 					[
 						fauxThinking("Batch again."),
+						fauxText("Synthetic teaching before the question."),
 						fauxToolCall("quiz", QUIZ_INPUT, { id: "call-1" }),
 						fauxToolCall("ask_user_question", { question: "Next topic?", options: [{ label: "Chemistry" }, { label: "History" }] }, { id: "call-2" }),
 					],

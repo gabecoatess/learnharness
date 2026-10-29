@@ -1,7 +1,9 @@
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { AgentEvent, AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentMessage, AgentTool, BeforeToolCallContext } from "@earendil-works/pi-agent-core";
 import { invalidInputResult, questionResult } from "./tool-execute.ts";
 import { providerEventObserver } from "./provider-events.ts";
+import { agentTelemetry } from "./telemetry.ts";
+import { createTeachingGuard } from "./teaching-guard.ts";
 import type { Usage } from "@earendil-works/pi-ai";
 import { PATHS } from "../../config.ts";
 import { APP_IDENTITY, piEngineFor, type PiEngine } from "./models.ts";
@@ -188,6 +190,19 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 	// LH_PROVIDER_EVENTS=1 and the caller handed a chatId; undefined is
 	// the normal no-observer path (tests, env-off).
 	const providerEvents = opts.chatId ? providerEventObserver(opts.chatId, kind) : undefined;
+	// Conditional registry inclusion, like the graph-tool gates: when
+	// closed, neither the tool nor its usage instructions reach the model.
+	// Match Claude across providers (including OpenRouter), not the API
+	// transport. Explicit test registries remain caller-owned.
+	const sendToUserIncluded = opts.tools === undefined && engine.model.id.toLowerCase().includes("claude");
+	// Layered turn recorder when LH_TELEMETRY=1 and the caller
+	// handed a chatId; every hook is a pure observer.
+	const telemetry = opts.chatId
+		? agentTelemetry(opts.chatId, kind, { included: sendToUserIncluded, explicitRegistry: opts.tools !== undefined, modelId: engine.model.id })
+		: undefined;
+	// No question without visible teaching: the teacher only —
+	// the prober's questions are diagnostic, practice poses no questions.
+	const teachingGuard = kind === "teacher" ? createTeachingGuard() : undefined;
 	const seenInputs = new Set((opts.messages ?? []).map((m) => (m as { id?: string }).id).filter(Boolean));
 	const agent = new Agent({
 		identity: APP_IDENTITY,
@@ -196,26 +211,38 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			systemPrompt,
 			model: engine.model,
 			thinkingLevel: engine.level,
-			// Conditional registry inclusion, like the graph-tool gates: when
-			// closed, neither the tool nor its usage instructions reach the model.
-			// Match Claude across providers (including OpenRouter), not the API
-			// transport. Explicit test registries remain caller-owned.
-			tools: [
-				...tools,
-				...(opts.tools === undefined && engine.model.id.toLowerCase().includes("claude")
-					? [withArgumentHeal(sendToUserTool)]
-					: []),
-			],
+			tools: [...tools, ...(sendToUserIncluded ? [withArgumentHeal(sendToUserTool)] : [])],
 			messages: opts.messages ?? [],
 		},
 		streamFn: engine.streamFn,
 		...(providerEvents ? { onProviderStreamEvent: providerEvents } : {}),
+		...(telemetry
+			? {
+					onPayload: telemetry.onPayload,
+					onResponse: telemetry.onResponse,
+					afterToolCall: telemetry.afterToolCall,
+				}
+			: {}),
+		...(telemetry || teachingGuard
+			? {
+					// Telemetry records the call first, so a blocked call still
+					// leaves its tool.before line; the guard then decides.
+					beforeToolCall: async (context: BeforeToolCallContext) => {
+						await telemetry?.beforeToolCall(context);
+						return teachingGuard?.(context);
+					},
+				}
+			: {}),
 		// 0.87.1: shouldStopAfterTurn → finishTurn. Same call point (after
 		// tool results attach, before turn_end) and `{ action: "end" }` still
 		// exits BEFORE the steering poll — the parked-marker stranding our
 		// Wave C registerLiveAgent-before-runPiTurn design depends on.
 		// undefined preserves normal scheduling (the old boolean false).
-		finishTurn: (turn) => (stopper(turn) ? { action: "end" } : undefined),
+		finishTurn: (turn) => {
+			const end = stopper(turn);
+			telemetry?.finishTurn(turn, end);
+			return end ? { action: "end" } : undefined;
+		},
 		// Wave C (2026-09-26, owner correction same day): markers handed to a
 		// live run drain from pi's STEERING queue — the lesson loop is one
 		// continuous teach→quiz→teach run, so delivery must inject at turn
@@ -232,6 +259,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 		// must never throw (pi's convertToLlm contract).
 		convertToLlm: toLlmMessages,
 		prepareRequest: (request) => {
+			telemetry?.prepareRequest(request);
 			if (opts.callPurpose) {
 				let learner = false, automatic = false;
 				const messages = request.context.messages;
@@ -250,6 +278,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 			opts.requestCycle?.prepare(request);
 		},
 	});
+	if (telemetry) agent.subscribe(telemetry.listener);
 	if (opts.onUsage) {
 		agent.subscribe((event: AgentEvent) => {
 			if (event.type === "message_end" && event.message.role === "assistant" && "usage" in event.message) {

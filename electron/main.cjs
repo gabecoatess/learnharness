@@ -503,9 +503,21 @@ function installUpdateNow() {
 	autoUpdater?.quitAndInstall();
 }
 
+/** Self-built copies never self-update: a release from the baked feed would
+ *  replace this build and its local changes. Update by rebuilding instead.
+ *  LH_SELF_UPDATE=1 re-arms the updater (tests; a Finder launch never sets it). */
+function selfUpdateEnabled() {
+	return process.env.LH_SELF_UPDATE === "1";
+}
+
 function setupAutoUpdater() {
 	if (!app.isPackaged) {
 		log("auto-update: dev build — updater disabled");
+		reportUpdateStatus("disabled");
+		return;
+	}
+	if (!selfUpdateEnabled()) {
+		log("auto-update: self-built copy — updater disabled");
 		reportUpdateStatus("disabled");
 		return;
 	}
